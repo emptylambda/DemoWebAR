@@ -1,0 +1,263 @@
+<!--
+WebAR + GPS Prototype (single HTML file)
+Features:
+- Location-based AR using A-Frame + AR.js + gps-entity-place
+- Simple UI to set a capsule location (lat, lon, radius)
+- When user is within radius, an AR entity (3D box + text) appears
+
+Notes:
+- Must be served over HTTPS (camera + geolocation require secure context).
+- Test on a mobile device with a modern browser (Chrome / Safari).
+- Libraries loaded from public CDNs (internet required).
+
+Usage:
+1. Host this file over HTTPS (or drop into GitHub Pages). 
+2. Open on your phone, allow location and camera permissions.
+3. Enter target latitude & longitude and radius (meters) and press "Place Capsule".
+4. Walk toward the location; when within radius the AR capsule appears.
+
+This is a minimal prototype intended for quick testing/proof-of-concept.
+-->
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>WebAR + GPS Prototype (Time Capsule)</title>
+  <style>
+    body, html { margin: 0; padding: 0; height: 100%; font-family: Arial, Helvetica, sans-serif; }
+    #ui { position: fixed; left: 10px; top: 10px; z-index: 9999; background: rgba(255,255,255,0.95); padding: 10px; border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,0.2); width: 320px; }
+    #ui input, #ui button { width: 100%; margin: 6px 0; padding: 8px; font-size: 14px; }
+    #status { font-size: 13px; color: #333; margin-top: 6px; }
+    #hint { font-size: 12px; color: #666; margin-top: 6px; }
+    a.small { font-size: 12px; color: #0066cc; }
+    .badge { background: #222; color: #fff; padding: 2px 6px; border-radius: 6px; font-size: 12px; }
+  </style>
+
+  <!-- A-Frame -->
+  <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
+  <!-- AR.js (A-Frame integration) -->
+  <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+  <!-- gps-entity-place component (location-based AR) -->
+  <script src="https://unpkg.com/aframe-gps-entity-place/dist/aframe-gps-entity-place.min.js"></script>
+</head>
+<body>
+
+  <div id="ui">
+    <strong>WebAR + GPS 時空膠囊 原型</strong>
+    <div id="status">狀態: <span class="badge" id="statustext">等待相機與定位權限</span></div>
+
+    <label>目標經度 (Longitude)</label>
+    <input id="lng" placeholder="例如 121.5654 (台北)" />
+    <label>目標緯度 (Latitude)</label>
+    <input id="lat" placeholder="例如 25.0324 (台北)" />
+    <label>解鎖半徑 (公尺)</label>
+    <input id="radius" placeholder="例如 30" value="30" />
+
+    <label>顯示訊息（開啟時）</label>
+    <input id="message" placeholder="這是留給未來的訊息..." />
+
+    <button id="placeBtn">放置時空膠囊 (Place Capsule)</button>
+    <button id="clearBtn">移除膠囊 (Clear)</button>
+
+    <div id="hint">提示: 請使用手機並允許 「相機」與「定位」。需 HTTPS。</div>
+    <div style="margin-top:8px"><a class="small" href="#" id="helpLink">如何測試？</a></div>
+  </div>
+
+  <!-- A-Frame scene with AR.js enabled -->
+  <a-scene
+    vr-mode-ui="enabled: false"
+    embedded
+    arjs="sourceType: webcam; debugUIEnabled: false;" >
+
+    <!-- Camera -->
+    <a-entity camera gps-camera rotation-reader></a-entity>
+
+    <!-- Placeholder for dynamically added capsule -->
+
+  </a-scene>
+
+  <script>
+    // Simple rotation-reader (for nicer model animation)
+    AFRAME.registerComponent('rotation-reader', {
+      tick: function () {
+        const rot = this.el.getAttribute('rotation');
+        // subtle auto-rotation if desired
+      }
+    });
+
+    const placeBtn = document.getElementById('placeBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const statustext = document.getElementById('statustext');
+
+    let capsuleEntity = null;
+
+    function setStatus(text) {
+      statustext.textContent = text;
+    }
+
+    function createCapsule(lat, lng, radius, msg) {
+      // Remove existing
+      if (capsuleEntity) { capsuleEntity.parentNode.removeChild(capsuleEntity); capsuleEntity = null; }
+
+      // Create an entity with gps-entity-place
+      const scene = document.querySelector('a-scene');
+      const el = document.createElement('a-entity');
+      el.setAttribute('gps-entity-place', `latitude: ${lat}; longitude: ${lng};`);
+      el.setAttribute('visible', 'false');
+
+      // Add a simple 3D box as capsule
+      const box = document.createElement('a-box');
+      box.setAttribute('position', '0 0.5 0');
+      box.setAttribute('scale', '1 1 1');
+      box.setAttribute('animation', 'property: rotation; to: 0 360 0; loop: true; dur: 8000; easing: linear');
+      box.setAttribute('shadow', 'receive: false');
+
+      // Add label as text
+      const text = document.createElement('a-text');
+      text.setAttribute('value', msg);
+      text.setAttribute('align', 'center');
+      text.setAttribute('position', '0 1.4 0');
+      text.setAttribute('look-at', '[gps-camera]');
+      text.setAttribute('wrap-count', '20');
+      text.setAttribute('side', 'double');
+
+      // For distance checking, attach an invisible sphere with event
+      const sphere = document.createElement('a-sphere');
+      sphere.setAttribute('radius', radius/10); // visual scale only
+      sphere.setAttribute('position', '0 0.5 0');
+      sphere.setAttribute('opacity', '0.0');
+
+      el.appendChild(box);
+      el.appendChild(text);
+      el.appendChild(sphere);
+
+      scene.appendChild(el);
+      capsuleEntity = el;
+
+      // Periodically check distance between device and target
+      monitorProximity(lat, lng, radius, el, msg);
+    }
+
+    function removeCapsule() {
+      if (capsuleEntity) { capsuleEntity.parentNode.removeChild(capsuleEntity); capsuleEntity = null; }
+    }
+
+    function toRad(deg){ return deg * Math.PI / 180; }
+    function haversineDistance(lat1, lon1, lat2, lon2){
+      // returns meters
+      const R = 6371000; // m
+      const dLat = toRad(lat2-lat1);
+      const dLon = toRad(lon2-lon1);
+      const a = Math.sin(dLat/2)*Math.sin(dLat/2) + Math.cos(toRad(lat1))*Math.cos(toRad(lat2)) * Math.sin(dLon/2)*Math.sin(dLon/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      return R * c;
+    }
+
+    let proximityInterval = null;
+    function monitorProximity(targetLat, targetLng, radius, el, msg) {
+      if (proximityInterval) { clearInterval(proximityInterval); proximityInterval = null; }
+
+      proximityInterval = setInterval(() => {
+        if (!navigator.geolocation) { setStatus('裝置不支援定位 (Geolocation)'); return; }
+        navigator.geolocation.getCurrentPosition(pos => {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          const d = haversineDistance(lat, lng, targetLat, targetLng);
+
+          setStatus(`你距離目標約 ${Math.round(d)} 公尺`);
+
+          if (d <= radius) {
+            // show AR entity
+            el.setAttribute('visible', 'true');
+            // Optionally show a one-time unlock alert
+            if (!el.dataset.unlocked) {
+              el.dataset.unlocked = '1';
+              alert('你已靠近時空膠囊！點選 AR 物件以閱讀內容。');
+            }
+            // Add click-to-open behaviour (display message modal)
+            el.addEventListener('click', () => {
+              showMessageOverlay(msg, lat, lng);
+            });
+          } else {
+            el.setAttribute('visible', 'false');
+          }
+        }, err => {
+          setStatus('定位失敗：' + err.message);
+        }, { enableHighAccuracy: true, maximumAge: 30000, timeout: 5000 });
+      }, 3000);
+    }
+
+    function showMessageOverlay(msg, lat, lng) {
+      const existing = document.getElementById('msgOverlay');
+      if (existing) existing.remove();
+
+      const overlay = document.createElement('div');
+      overlay.id = 'msgOverlay';
+      overlay.style.position = 'fixed';
+      overlay.style.left = '0'; overlay.style.right = '0'; overlay.style.bottom = '0';
+      overlay.style.background = 'rgba(0,0,0,0.8)';
+      overlay.style.color = '#fff'; overlay.style.padding = '16px'; overlay.style.zIndex = '10000';
+      overlay.style.fontSize = '16px';
+
+      overlay.innerHTML = `<div style="max-width:640px;margin:0 auto">
+        <div style="font-weight:700;margin-bottom:8px">時空膠囊解鎖</div>
+        <div style="margin-bottom:8px">${escapeHtml(msg)}</div>
+        <div style="font-size:12px;color:#ccc">位置：${lat.toFixed(6)}, ${lng.toFixed(6)}</div>
+        <div style="margin-top:8px;text-align:right"><button id="closeOverlay" style="padding:6px 10px">關閉</button></div>
+      </div>`;
+
+      document.body.appendChild(overlay);
+      document.getElementById('closeOverlay').addEventListener('click', () => overlay.remove());
+    }
+
+    function escapeHtml(unsafe) {
+      return unsafe
+           .replace(/&/g, "&amp;")
+           .replace(/</g, "&lt;")
+           .replace(/>/g, "&gt;")
+           .replace(/\"/g, "&quot;")
+           .replace(/'/g, "&#039;");
+    }
+
+    placeBtn.addEventListener('click', () => {
+      const lat = parseFloat(document.getElementById('lat').value);
+      const lng = parseFloat(document.getElementById('lng').value);
+      const radius = parseFloat(document.getElementById('radius').value) || 30;
+      const msg = document.getElementById('message').value || '留給未來的訊息';
+
+      if (!lat || !lng) { alert('請填入正確的緯度與經度'); return; }
+
+      createCapsule(lat, lng, radius, msg);
+    });
+
+    clearBtn.addEventListener('click', () => {
+      removeCapsule();
+      setStatus('已移除膠囊');
+      if (proximityInterval) { clearInterval(proximityInterval); proximityInterval = null; }
+    });
+
+    // Help link quick demo coordinates (example: Taipei 101)
+    document.getElementById('helpLink').addEventListener('click', (e) => {
+      e.preventDefault();
+      document.getElementById('lat').value = '25.033964';
+      document.getElementById('lng').value = '121.564468';
+      document.getElementById('radius').value = '40';
+      document.getElementById('message').value = '這裡是示範位置：台北 101，五年後再回來吧！';
+      alert('已填入示範座標（台北 101）。請在手機上測試並允許定位與相機權限。');
+    });
+
+    // On load request permissions hints
+    window.addEventListener('load', () => {
+      // Check for secure context
+      if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+        setStatus('請透過 HTTPS 或 localhost 開啟以使用相機與定位');
+      } else {
+        setStatus('請允許相機與定位權限，然後設定膠囊座標');
+      }
+    });
+
+  </script>
+</body>
+</html>
